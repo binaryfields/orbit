@@ -1,0 +1,10 @@
+[package]
+name = "orbit"
+version = "0.1.0"
+edition = "2024"
+description = "Lite application launcher for macOS"
+license = "MIT"
+
+[dependencies]
+eframe = "0.35"
+plist = "1.9.0"
