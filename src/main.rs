@@ -1,5 +1,6 @@
 mod app;
 mod catalog;
+mod search;
 
 use eframe::egui;
 
