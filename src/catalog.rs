@@ -1,10 +1,6 @@
 use std::path::{Path, PathBuf};
 
-const SCAN_DIRS: &[&str] = &[
-    "/Applications",
-    "/System/Applications",
-    "/System/Applications/Utilities",
-];
+const SCAN_DIRS: &[&str] = &["/Applications", "/System/Applications"];
 
 #[derive(Clone, Debug)]
 pub struct AppEntry {
@@ -23,13 +19,7 @@ pub fn scan() -> Vec<AppEntry> {
         collect_apps(&dir, 1, &mut entries);
     }
 
-    dedupe(entries)
-}
-
-fn dedupe(mut entries: Vec<AppEntry>) -> Vec<AppEntry> {
-    entries.sort_by(|a, b| a.path.cmp(&b.path));
-    entries.dedup_by(|a, b| a.path == b.path);
-    entries.sort_by_key(|a| a.name.to_lowercase());
+    entries.sort_by_cached_key(|a| a.name.to_lowercase());
     entries
 }
 
@@ -78,40 +68,12 @@ fn name_from_dict(dict: &plist::Dictionary, stem: String) -> String {
 mod tests {
     use super::*;
 
-    fn entry(name: &str, path: &str) -> AppEntry {
-        AppEntry {
-            name: name.to_owned(),
-            path: PathBuf::from(path),
-        }
-    }
-
     fn dict(pairs: &[(&str, &str)]) -> plist::Dictionary {
         let mut dict = plist::Dictionary::new();
         for (key, value) in pairs {
             dict.insert((*key).to_owned(), plist::Value::String((*value).to_owned()));
         }
         dict
-    }
-
-    #[test]
-    fn dedupe_duplicate_paths() {
-        let entries = vec![
-            entry("Terminal", "/System/Applications/Utilities/Terminal.app"),
-            entry("Console", "/System/Applications/Utilities/Console.app"),
-            entry("Terminal", "/System/Applications/Utilities/Terminal.app"),
-        ];
-        let names: Vec<String> = dedupe(entries).into_iter().map(|e| e.name).collect();
-        assert_eq!(names, ["Console", "Terminal"]);
-    }
-
-    #[test]
-    fn dedupe_mixed_case_names() {
-        let entries = vec![
-            entry("Xcode", "/Applications/Xcode.app"),
-            entry("iTerm", "/Applications/iTerm.app"),
-        ];
-        let names: Vec<String> = dedupe(entries).into_iter().map(|e| e.name).collect();
-        assert_eq!(names, ["iTerm", "Xcode"]);
     }
 
     #[test]
