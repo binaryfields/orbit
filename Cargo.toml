@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 eframe = "0.35"
+nucleo-matcher = "0.3"
 plist = "1.9.0"
