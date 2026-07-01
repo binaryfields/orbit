@@ -1,15 +1,36 @@
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use global_hotkey::GlobalHotKeyManager;
+use tray_icon::TrayIcon;
 
 use crate::catalog::{self, AppEntry};
-use crate::hotkey::{TOGGLE_REQUESTED, register_hotkey};
-use crate::macos;
+use crate::hotkey::register_hotkey;
 use crate::search::Search;
+use crate::{macos, tray};
 
 pub(crate) static IS_VISIBLE: AtomicBool = AtomicBool::new(true);
+
+pub enum Request {
+    Toggle,
+    Show,
+    Rescan,
+}
+
+#[derive(Clone)]
+pub struct Commands {
+    tx: Sender<Request>,
+    ctx: egui::Context,
+}
+
+impl Commands {
+    pub fn send(&self, request: Request) {
+        let _ = self.tx.send(request);
+        self.ctx.request_repaint();
+    }
+}
 
 const ROW_HEIGHT: f32 = 44.0;
 const ICON_SIZE: f32 = 32.0;
@@ -20,6 +41,8 @@ const ROW_HOVER_BG: egui::Color32 = egui::Color32::from_rgb(40, 40, 46);
 
 pub struct OrbitApp {
     _hotkey: Option<GlobalHotKeyManager>,
+    _tray: Option<TrayIcon>,
+    cmd_rx: Receiver<Request>,
     apps: Vec<AppEntry>,
     search: Search,
     query: String,
@@ -39,8 +62,16 @@ impl OrbitApp {
         let mut search = Search::default();
         let results = search.filter("", &apps);
 
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let commands = Commands {
+            tx: cmd_tx,
+            ctx: cc.egui_ctx.clone(),
+        };
+
         Self {
-            _hotkey: register_hotkey(&cc.egui_ctx),
+            _hotkey: register_hotkey(commands.clone()),
+            _tray: tray::setup(commands),
+            cmd_rx,
             apps,
             search,
             query: String::new(),
@@ -119,15 +150,67 @@ impl OrbitApp {
             }
         }
     }
+
+    fn draw_result_row(&mut self, ui: &mut egui::Ui, row: usize, selection_moved: bool) -> bool {
+        let app_idx = self.results[row];
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), ROW_HEIGHT),
+            egui::Sense::click(),
+        );
+        let is_selected = row == self.selected;
+
+        if is_selected {
+            ui.painter().rect_filled(rect, 8.0, ROW_SELECTED_BG);
+            if selection_moved {
+                ui.scroll_to_rect(rect, None);
+            }
+        } else if response.hovered() {
+            ui.painter().rect_filled(rect, 8.0, ROW_HOVER_BG);
+        }
+
+        let icon_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + 10.0 + ICON_SIZE / 2.0, rect.center().y),
+            egui::vec2(ICON_SIZE, ICON_SIZE),
+        );
+        ui.painter()
+            .rect_filled(icon_rect, 6.0, egui::Color32::from_gray(70));
+
+        ui.painter().text(
+            egui::pos2(icon_rect.right() + 12.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &self.apps[app_idx].name,
+            egui::FontId::proportional(17.0),
+            if is_selected {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::from_gray(215)
+            },
+        );
+
+        response.clicked()
+    }
 }
 
 impl eframe::App for OrbitApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if TOGGLE_REQUESTED.swap(0, Ordering::SeqCst) % 2 == 1 {
-            if self.visible {
-                self.hide(ctx);
-            } else {
-                self.show(ctx);
+        while let Ok(cmd) = self.cmd_rx.try_recv() {
+            match cmd {
+                Request::Toggle => {
+                    if self.visible {
+                        self.hide(ctx);
+                    } else {
+                        self.show(ctx);
+                    }
+                }
+                Request::Show => {
+                    if !self.visible {
+                        self.show(ctx);
+                    }
+                }
+                Request::Rescan => {
+                    self.apps = catalog::scan();
+                    self.refilter();
+                }
             }
         }
 
@@ -194,42 +277,7 @@ impl eframe::App for OrbitApp {
                 .auto_shrink([false, false])
                 .show_rows(ui, ROW_HEIGHT, self.results.len(), |ui, range| {
                     for row in range {
-                        let app_idx = self.results[row];
-                        let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), ROW_HEIGHT),
-                            egui::Sense::click(),
-                        );
-                        let is_selected = row == self.selected;
-
-                        if is_selected {
-                            ui.painter().rect_filled(rect, 8.0, ROW_SELECTED_BG);
-                            if selection_moved {
-                                ui.scroll_to_rect(rect, None);
-                            }
-                        } else if response.hovered() {
-                            ui.painter().rect_filled(rect, 8.0, ROW_HOVER_BG);
-                        }
-
-                        let icon_rect = egui::Rect::from_center_size(
-                            egui::pos2(rect.left() + 10.0 + ICON_SIZE / 2.0, rect.center().y),
-                            egui::vec2(ICON_SIZE, ICON_SIZE),
-                        );
-                        ui.painter()
-                            .rect_filled(icon_rect, 6.0, egui::Color32::from_gray(70));
-
-                        ui.painter().text(
-                            egui::pos2(icon_rect.right() + 12.0, rect.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            &self.apps[app_idx].name,
-                            egui::FontId::proportional(17.0),
-                            if is_selected {
-                                egui::Color32::WHITE
-                            } else {
-                                egui::Color32::from_gray(215)
-                            },
-                        );
-
-                        if response.clicked() {
+                        if self.draw_result_row(ui, row, selection_moved) {
                             clicked_row = Some(row);
                         }
                     }

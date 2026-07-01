@@ -3,6 +3,7 @@ mod catalog;
 mod hotkey;
 mod macos;
 mod search;
+mod tray;
 
 use eframe::egui;
 use global_hotkey::hotkey::{Code, Modifiers};
