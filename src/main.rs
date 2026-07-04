@@ -1,6 +1,7 @@
 mod app;
 mod catalog;
 mod hotkey;
+mod icons;
 mod macos;
 mod search;
 mod tray;
