@@ -2,9 +2,11 @@ mod app;
 mod catalog;
 mod hotkey;
 mod icons;
+mod launcher;
 mod macos;
 mod search;
 mod tray;
+mod view;
 
 use eframe::egui;
 use global_hotkey::hotkey::{Code, Modifiers};
