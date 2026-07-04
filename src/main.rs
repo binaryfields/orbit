@@ -2,6 +2,8 @@ use eframe::egui;
 
 mod app;
 mod catalog;
+mod hotkey;
+mod macos;
 
 pub const WINDOW_SIZE: egui::Vec2 = egui::Vec2 { x: 640.0, y: 420.0 };
 
@@ -13,6 +15,7 @@ fn main() -> eframe::Result {
             .with_transparent(true)
             .with_always_on_top()
             .with_resizable(false),
+        event_loop_builder: Some(Box::new(macos::set_accessory_activation_policy)),
         ..Default::default()
     };
     eframe::run_native(

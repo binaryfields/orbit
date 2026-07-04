@@ -1,11 +1,15 @@
 use std::cmp::Reverse;
 use std::process::Command;
+use std::sync::atomic::Ordering;
 
 use eframe::egui;
+use global_hotkey::GlobalHotKeyManager;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Matcher, Utf32Str};
 
 use crate::catalog::{self, AppEntry};
+use crate::hotkey::{self, TOGGLE_REQUESTED};
+use crate::macos;
 
 const ROW_HEIGHT: f32 = 44.0;
 const ICON_SIZE: f32 = 32.0;
@@ -15,11 +19,14 @@ const ROW_SELECTED_BG: egui::Color32 = egui::Color32::from_rgb(64, 64, 84);
 const ROW_HOVER_BG: egui::Color32 = egui::Color32::from_rgb(40, 40, 46);
 
 pub struct OrbitApp {
-    query: String,
+    _hotkey: Option<GlobalHotKeyManager>,
     apps: Vec<AppEntry>,
     matcher: Matcher,
+    query: String,
     results: Vec<usize>,
     selected: usize,
+    visible: bool,
+    positioned: bool,
 }
 
 impl OrbitApp {
@@ -27,24 +34,61 @@ impl OrbitApp {
         let mut visuals = egui::Visuals::dark();
         visuals.text_cursor.blink = false;
         cc.egui_ctx.set_visuals(visuals);
+
         let apps = catalog::scan();
         let mut matcher = Matcher::default();
         let results = Self::rank(&mut matcher, "", &apps);
+
         Self {
-            query: String::new(),
+            _hotkey: hotkey::register(&cc.egui_ctx),
             apps,
             matcher,
+            query: String::new(),
             results,
             selected: 0,
+            visible: true,
+            positioned: false,
         }
     }
+
+    // ---- Commands ----
+
+    fn show(&mut self, ctx: &egui::Context) {
+        self.visible = true;
+        self.query.clear();
+        self.selected = 0;
+        self.update_results();
+        macos::activate_app();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        self.position(ctx);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.request_repaint();
+    }
+
+    // ---- Placement ----
+
+    fn position(&self, ctx: &egui::Context) -> bool {
+        let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) else {
+            return false;
+        };
+        if monitor.x <= 0.0 || monitor.y <= 0.0 {
+            return false;
+        }
+        let pos = egui::pos2((monitor.x - crate::WINDOW_SIZE.x) / 2.0, monitor.y * 0.18);
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+        true
+    }
+
+    // ---- Results ----
 
     fn update_results(&mut self) {
         self.results = Self::rank(&mut self.matcher, &self.query, &self.apps);
         self.selected = self.selected.min(self.results.len().saturating_sub(1));
     }
 
-    fn launch(&self, result_row: usize) {
+    // ---- Launching ----
+
+    fn launch(&mut self, ctx: &egui::Context, result_row: usize) {
         let Some(&app_idx) = self.results.get(result_row) else {
             return;
         };
@@ -52,7 +96,10 @@ impl OrbitApp {
         if let Err(err) = Command::new("open").arg(path).spawn() {
             eprintln!("orbit: failed to launch {}: {err}", path.display());
         }
+        self.hide(ctx);
     }
+
+    // ---- Shared ----
 
     fn rank(matcher: &mut Matcher, query: &str, apps: &[AppEntry]) -> Vec<usize> {
         if query.trim().is_empty() {
@@ -74,9 +121,29 @@ impl OrbitApp {
         hits.sort_by_key(|&(score, i)| (Reverse(score), &apps[i].name));
         hits.into_iter().map(|(_, i)| i).collect()
     }
+
+    fn hide(&mut self, ctx: &egui::Context) {
+        self.visible = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        macos::hide_app();
+    }
 }
 
 impl eframe::App for OrbitApp {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if TOGGLE_REQUESTED.swap(0, Ordering::SeqCst) % 2 == 1 {
+            if self.visible {
+                self.hide(ctx);
+            } else {
+                self.show(ctx);
+            }
+        }
+
+        if !self.positioned {
+            self.positioned = self.position(ctx);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
@@ -93,9 +160,10 @@ impl eframe::App for OrbitApp {
                 selection_moved = true;
             }
         });
-
         let pressed_enter =
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        let pressed_escape =
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
         let panel = egui::Frame::new()
             .fill(PANEL_BG)
@@ -175,9 +243,11 @@ impl eframe::App for OrbitApp {
         });
 
         if let Some(row) = clicked_row {
-            self.launch(row);
+            self.launch(&ctx, row);
         } else if pressed_enter {
-            self.launch(self.selected);
+            self.launch(&ctx, self.selected);
+        } else if pressed_escape {
+            self.hide(&ctx);
         }
     }
 
