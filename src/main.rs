@@ -7,6 +7,7 @@ mod macos;
 mod search;
 mod tray;
 mod view;
+mod window;
 
 use eframe::egui;
 use global_hotkey::hotkey::{Code, Modifiers};

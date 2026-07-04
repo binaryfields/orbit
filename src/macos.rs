@@ -3,7 +3,9 @@ use std::process::Command;
 
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSApplication, NSApplicationActivationOptions, NSRunningApplication};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationOptions, NSRunningApplication, NSWindowCollectionBehavior,
+};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use winit::event_loop::EventLoopBuilder;
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
@@ -39,6 +41,19 @@ pub fn activate_app() {
 pub fn hide_app() {
     let Some(app) = ns_app() else { return };
     app.hide(None);
+}
+
+/// Let the window follow the user across Spaces (and over full-screen apps)
+/// instead of yanking them back. Run before the tray item exists — it
+/// applies to every window the app owns.
+pub fn join_all_spaces() {
+    let Some(app) = ns_app() else { return };
+    for window in app.windows().iter() {
+        let behavior = window.collectionBehavior()
+            | NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary;
+        window.setCollectionBehavior(behavior);
+    }
 }
 
 pub fn open(path: &Path) -> std::io::Result<()> {

@@ -10,6 +10,7 @@ use crate::catalog;
 use crate::hotkey::register_hotkey;
 use crate::launcher::Launcher;
 use crate::view::{Intent, View};
+use crate::window::{Step, Window};
 use crate::{macos, tray};
 
 pub(crate) static IS_VISIBLE: AtomicBool = AtomicBool::new(true);
@@ -41,15 +42,15 @@ pub struct OrbitApp {
     cmd_rx: Receiver<Request>,
     launcher: Launcher,
     view: View,
-    visible: bool,
-    frames_since_show: u32,
-    pending_activate: bool,
+    window: Window,
     positioned: bool,
 }
 
 impl OrbitApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
+
+        macos::join_all_spaces();
 
         let mut launcher = Launcher::default();
         launcher.set_apps(catalog::scan());
@@ -68,27 +69,23 @@ impl OrbitApp {
             cmd_rx,
             launcher,
             view: View::default(),
-            visible: true,
-            frames_since_show: 0,
-            pending_activate: true,
+            window: Window::Activating { frames: 0 },
             positioned: false,
         }
     }
 
     fn show(&mut self, ctx: &egui::Context) {
-        self.visible = true;
+        self.window = Window::Activating { frames: 0 };
         IS_VISIBLE.store(true, Ordering::SeqCst);
-        self.frames_since_show = 0;
         self.launcher.reset();
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         self.position(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        self.pending_activate = true;
         ctx.request_repaint();
     }
 
     fn hide(&mut self, ctx: &egui::Context) {
-        self.visible = false;
+        self.window = Window::Hidden;
         IS_VISIBLE.store(false, Ordering::SeqCst);
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         macos::hide_app();
@@ -117,20 +114,16 @@ impl OrbitApp {
     }
 
     fn update_activation(&mut self, ctx: &egui::Context) {
-        if !self.visible {
-            return;
-        }
-        if self.pending_activate && self.frames_since_show >= 1 {
-            self.pending_activate = false;
-            macos::activate_app();
-        }
-        if self.frames_since_show > 4 && ctx.input(|i| i.viewport().focused) == Some(false) {
-            self.hide(ctx);
-        } else {
-            self.frames_since_show = self.frames_since_show.saturating_add(1);
-            if self.frames_since_show <= 5 {
+        let focused = ctx.input(|i| i.viewport().focused);
+        match self.window.advance(focused) {
+            Step::Idle => {}
+            Step::Settle { activate } => {
+                if activate {
+                    macos::activate_app();
+                }
                 ctx.request_repaint();
             }
+            Step::Dismiss => self.hide(ctx),
         }
     }
 }
@@ -140,14 +133,14 @@ impl eframe::App for OrbitApp {
         while let Ok(cmd) = self.cmd_rx.try_recv() {
             match cmd {
                 Request::Toggle => {
-                    if self.visible {
+                    if self.window.is_visible() {
                         self.hide(ctx);
                     } else {
                         self.show(ctx);
                     }
                 }
                 Request::Show => {
-                    if !self.visible {
+                    if !self.window.is_visible() {
                         self.show(ctx);
                     }
                 }
@@ -184,7 +177,7 @@ impl eframe::App for OrbitApp {
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if self.frames_since_show <= 1 {
+        if self.window.just_shown() {
             raw_input
                 .events
                 .retain(|e| !matches!(e, egui::Event::Text(t) if t == " " || t == "\u{a0}"));
