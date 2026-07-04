@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::process::Command;
+
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSApplicationActivationOptions, NSRunningApplication};
@@ -36,6 +39,10 @@ pub fn activate_app() {
 pub fn hide_app() {
     let Some(app) = ns_app() else { return };
     app.hide(None);
+}
+
+pub fn open(path: &Path) -> std::io::Result<()> {
+    Command::new("open").arg(path).spawn().map(|_| ())
 }
 
 pub fn set_accessory_activation_policy<T>(builder: &mut EventLoopBuilder<T>) {
