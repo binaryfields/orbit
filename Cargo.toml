@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 crossbeam-channel = "0.5"
 eframe = "0.35"
+file_icon_provider = "1"
 global-hotkey = "0.8"
 nucleo-matcher = "0.3"
 objc2 = "0.6"
