@@ -1,6 +1,7 @@
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSApplicationActivationOptions, NSRunningApplication};
+use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use winit::event_loop::EventLoopBuilder;
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 
@@ -39,4 +40,34 @@ pub fn hide_app() {
 
 pub fn set_accessory_activation_policy<T>(builder: &mut EventLoopBuilder<T>) {
     builder.with_activation_policy(ActivationPolicy::Accessory);
+}
+
+fn login_service() -> Retained<SMAppService> {
+    unsafe { SMAppService::mainAppService() }
+}
+
+pub fn login_enabled() -> bool {
+    let status = unsafe { login_service().status() };
+    status == SMAppServiceStatus::Enabled
+}
+
+pub fn set_login(enable: bool) -> bool {
+    let service = login_service();
+    let result = unsafe {
+        if enable {
+            service.registerAndReturnError()
+        } else {
+            service.unregisterAndReturnError()
+        }
+    };
+    if let Err(err) = result {
+        let verb = if enable { "enable" } else { "disable" };
+        eprintln!("orbit: could not {verb} start-at-login: {err}");
+    }
+
+    let status = unsafe { service.status() };
+    if enable && status == SMAppServiceStatus::RequiresApproval {
+        unsafe { SMAppService::openSystemSettingsLoginItems() };
+    }
+    status == SMAppServiceStatus::Enabled
 }

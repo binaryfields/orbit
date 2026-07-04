@@ -5,6 +5,7 @@ use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use global_hotkey::GlobalHotKeyManager;
 use tray_icon::TrayIcon;
+use tray_icon::menu::CheckMenuItem;
 
 use crate::catalog::{self, AppEntry};
 use crate::hotkey::register_hotkey;
@@ -18,6 +19,7 @@ pub enum Request {
     Toggle,
     Show,
     Rescan,
+    ToggleLogin,
 }
 
 #[derive(Clone)]
@@ -43,6 +45,7 @@ const ROW_HOVER_BG: egui::Color32 = egui::Color32::from_rgb(40, 40, 46);
 pub struct OrbitApp {
     _hotkey: Option<GlobalHotKeyManager>,
     _tray: Option<TrayIcon>,
+    login_item: Option<CheckMenuItem>,
     cmd_rx: Receiver<Request>,
     apps: Vec<AppEntry>,
     search: Search,
@@ -69,10 +72,12 @@ impl OrbitApp {
             tx: cmd_tx,
             ctx: cc.egui_ctx.clone(),
         };
+        let (tray, login_item) = tray::setup(commands.clone()).unzip();
 
         Self {
-            _hotkey: register_hotkey(commands.clone()),
-            _tray: tray::setup(commands),
+            _hotkey: register_hotkey(commands),
+            _tray: tray,
+            login_item,
             cmd_rx,
             apps,
             search,
@@ -231,6 +236,12 @@ impl eframe::App for OrbitApp {
                 Request::Rescan => {
                     self.apps = catalog::scan();
                     self.refilter();
+                }
+                Request::ToggleLogin => {
+                    let enabled = macos::set_login(!macos::login_enabled());
+                    if let Some(item) = &self.login_item {
+                        item.set_checked(enabled);
+                    }
                 }
             }
         }
