@@ -1,15 +1,14 @@
 use std::cmp::Reverse;
-use std::process::Command;
-use std::sync::atomic::Ordering;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 use eframe::egui;
 use global_hotkey::GlobalHotKeyManager;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Matcher, Utf32Str};
+use tray_icon::TrayIcon;
 
 use crate::catalog::{self, AppEntry};
-use crate::hotkey::{self, TOGGLE_REQUESTED};
-use crate::macos;
+use crate::{hotkey, macos, tray};
 
 const ROW_HEIGHT: f32 = 44.0;
 const ICON_SIZE: f32 = 32.0;
@@ -18,8 +17,16 @@ const PANEL_BG: egui::Color32 = egui::Color32::from_rgba_premultiplied(24, 24, 2
 const ROW_SELECTED_BG: egui::Color32 = egui::Color32::from_rgb(64, 64, 84);
 const ROW_HOVER_BG: egui::Color32 = egui::Color32::from_rgb(40, 40, 46);
 
+pub enum Command {
+    Toggle,
+    Show,
+    Rescan,
+}
+
 pub struct OrbitApp {
     _hotkey: Option<GlobalHotKeyManager>,
+    _tray: Option<TrayIcon>,
+    cmd_rx: Receiver<Command>,
     apps: Vec<AppEntry>,
     matcher: Matcher,
     query: String,
@@ -39,8 +46,16 @@ impl OrbitApp {
         let mut matcher = Matcher::default();
         let results = Self::rank(&mut matcher, "", &apps);
 
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let sender = CommandSender {
+            tx: cmd_tx,
+            ctx: cc.egui_ctx.clone(),
+        };
+
         Self {
-            _hotkey: hotkey::register(&cc.egui_ctx),
+            _hotkey: hotkey::register(sender.clone()),
+            _tray: tray::build(sender),
+            cmd_rx,
             apps,
             matcher,
             query: String::new(),
@@ -86,6 +101,50 @@ impl OrbitApp {
         self.selected = self.selected.min(self.results.len().saturating_sub(1));
     }
 
+    // ---- Rendering ----
+
+    fn draw_result_row(&mut self, ui: &mut egui::Ui, row: usize, selection_moved: bool) -> bool {
+        let app_idx = self.results[row];
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), ROW_HEIGHT),
+            egui::Sense::click(),
+        );
+        let is_selected = row == self.selected;
+
+        if is_selected {
+            ui.painter().rect_filled(rect, 8.0, ROW_SELECTED_BG);
+            if selection_moved {
+                ui.scroll_to_rect(rect, None);
+            }
+        } else if response.hovered() {
+            ui.painter().rect_filled(rect, 8.0, ROW_HOVER_BG);
+        }
+        if !ui.is_rect_visible(rect) {
+            return false;
+        }
+
+        let icon_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + 10.0 + ICON_SIZE / 2.0, rect.center().y),
+            egui::vec2(ICON_SIZE, ICON_SIZE),
+        );
+        ui.painter()
+            .rect_filled(icon_rect, 6.0, egui::Color32::from_gray(70));
+
+        ui.painter().text(
+            egui::pos2(icon_rect.right() + 12.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &self.apps[app_idx].name,
+            egui::FontId::proportional(17.0),
+            if is_selected {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::from_gray(215)
+            },
+        );
+
+        response.clicked()
+    }
+
     // ---- Launching ----
 
     fn launch(&mut self, ctx: &egui::Context, result_row: usize) {
@@ -93,7 +152,7 @@ impl OrbitApp {
             return;
         };
         let path = &self.apps[app_idx].path;
-        if let Err(err) = Command::new("open").arg(path).spawn() {
+        if let Err(err) = std::process::Command::new("open").arg(path).spawn() {
             eprintln!("orbit: failed to launch {}: {err}", path.display());
         }
         self.hide(ctx);
@@ -131,11 +190,24 @@ impl OrbitApp {
 
 impl eframe::App for OrbitApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if TOGGLE_REQUESTED.swap(0, Ordering::SeqCst) % 2 == 1 {
-            if self.visible {
-                self.hide(ctx);
-            } else {
-                self.show(ctx);
+        while let Ok(cmd) = self.cmd_rx.try_recv() {
+            match cmd {
+                Command::Toggle => {
+                    if self.visible {
+                        self.hide(ctx);
+                    } else {
+                        self.show(ctx);
+                    }
+                }
+                Command::Show => {
+                    if !self.visible {
+                        self.show(ctx);
+                    }
+                }
+                Command::Rescan => {
+                    self.apps = catalog::scan();
+                    self.update_results();
+                }
             }
         }
 
@@ -200,42 +272,7 @@ impl eframe::App for OrbitApp {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     for row in 0..self.results.len() {
-                        let app_idx = self.results[row];
-                        let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), ROW_HEIGHT),
-                            egui::Sense::click(),
-                        );
-                        let is_selected = row == self.selected;
-
-                        if is_selected {
-                            ui.painter().rect_filled(rect, 8.0, ROW_SELECTED_BG);
-                            if selection_moved {
-                                ui.scroll_to_rect(rect, None);
-                            }
-                        } else if response.hovered() {
-                            ui.painter().rect_filled(rect, 8.0, ROW_HOVER_BG);
-                        }
-
-                        let icon_rect = egui::Rect::from_center_size(
-                            egui::pos2(rect.left() + 10.0 + ICON_SIZE / 2.0, rect.center().y),
-                            egui::vec2(ICON_SIZE, ICON_SIZE),
-                        );
-                        ui.painter()
-                            .rect_filled(icon_rect, 6.0, egui::Color32::from_gray(70));
-
-                        ui.painter().text(
-                            egui::pos2(icon_rect.right() + 12.0, rect.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            &self.apps[app_idx].name,
-                            egui::FontId::proportional(17.0),
-                            if is_selected {
-                                egui::Color32::WHITE
-                            } else {
-                                egui::Color32::from_gray(215)
-                            },
-                        );
-
-                        if response.clicked() {
+                        if self.draw_result_row(ui, row, selection_moved) {
                             clicked_row = Some(row);
                         }
                     }
@@ -253,6 +290,19 @@ impl eframe::App for OrbitApp {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0; 4]
+    }
+}
+
+#[derive(Clone)]
+pub struct CommandSender {
+    tx: Sender<Command>,
+    ctx: egui::Context,
+}
+
+impl CommandSender {
+    pub fn send(&self, command: Command) {
+        let _ = self.tx.send(command);
+        self.ctx.request_repaint();
     }
 }
 
