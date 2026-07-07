@@ -8,6 +8,7 @@ use nucleo_matcher::{Matcher, Utf32Str};
 use tray_icon::TrayIcon;
 
 use crate::catalog::{self, AppEntry};
+use crate::icons::IconCache;
 use crate::{hotkey, macos, tray};
 
 const ROW_HEIGHT: f32 = 44.0;
@@ -29,6 +30,7 @@ pub struct OrbitApp {
     cmd_rx: Receiver<Command>,
     apps: Vec<AppEntry>,
     matcher: Matcher,
+    icons: IconCache,
     query: String,
     results: Vec<usize>,
     selected: usize,
@@ -58,6 +60,7 @@ impl OrbitApp {
             cmd_rx,
             apps,
             matcher,
+            icons: IconCache::default(),
             query: String::new(),
             results,
             selected: 0,
@@ -103,7 +106,13 @@ impl OrbitApp {
 
     // ---- Rendering ----
 
-    fn draw_result_row(&mut self, ui: &mut egui::Ui, row: usize, selection_moved: bool) -> bool {
+    fn draw_result_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        row: usize,
+        selection_moved: bool,
+    ) -> bool {
         let app_idx = self.results[row];
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), ROW_HEIGHT),
@@ -127,8 +136,20 @@ impl OrbitApp {
             egui::pos2(rect.left() + 10.0 + ICON_SIZE / 2.0, rect.center().y),
             egui::vec2(ICON_SIZE, ICON_SIZE),
         );
-        ui.painter()
-            .rect_filled(icon_rect, 6.0, egui::Color32::from_gray(70));
+        match self.icons.get_or_load(ctx, &self.apps[app_idx].path) {
+            Some(texture) => {
+                ui.painter().image(
+                    texture.id(),
+                    icon_rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+            None => {
+                ui.painter()
+                    .rect_filled(icon_rect, 6.0, egui::Color32::from_gray(70));
+            }
+        }
 
         ui.painter().text(
             egui::pos2(icon_rect.right() + 12.0, rect.center().y),
@@ -272,7 +293,7 @@ impl eframe::App for OrbitApp {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     for row in 0..self.results.len() {
-                        if self.draw_result_row(ui, row, selection_moved) {
+                        if self.draw_result_row(ui, &ctx, row, selection_moved) {
                             clicked_row = Some(row);
                         }
                     }

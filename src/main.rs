@@ -3,6 +3,7 @@ use eframe::egui;
 mod app;
 mod catalog;
 mod hotkey;
+mod icons;
 mod macos;
 mod tray;
 
