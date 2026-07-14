@@ -6,7 +6,7 @@ use crate::launcher::Launcher;
 const ROW_HEIGHT: f32 = 44.0;
 const ICON_SIZE: f32 = 32.0;
 
-const PANEL_BG: egui::Color32 = egui::Color32::from_rgba_premultiplied(24, 24, 27, 246);
+const PANEL_BG: egui::Color32 = egui::Color32::from_rgba_premultiplied(17, 17, 19, 180);
 const ROW_SELECTED_BG: egui::Color32 = egui::Color32::from_rgb(64, 64, 84);
 const ROW_HOVER_BG: egui::Color32 = egui::Color32::from_rgb(40, 40, 46);
 
@@ -42,7 +42,7 @@ impl View {
 
         let panel = egui::Frame::new()
             .fill(PANEL_BG)
-            .corner_radius(egui::CornerRadius::same(14))
+            .corner_radius(egui::CornerRadius::same(crate::PANEL_CORNER_RADIUS))
             .inner_margin(egui::Margin::same(14));
         let mut clicked_row = None;
 
