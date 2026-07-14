@@ -51,6 +51,7 @@ impl OrbitApp {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
 
         macos::join_all_spaces();
+        macos::add_vibrancy();
 
         let mut launcher = Launcher::default();
         launcher.set_apps(catalog::scan());
