@@ -45,6 +45,10 @@ impl Launcher {
         self.results.len()
     }
 
+    pub fn is_scanning(&self) -> bool {
+        self.apps.is_empty()
+    }
+
     pub fn entry(&self, row: usize) -> Option<&AppEntry> {
         self.results.get(row).map(|&i| &self.apps[i])
     }

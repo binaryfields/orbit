@@ -4,6 +4,7 @@ mod hotkey;
 mod icons;
 mod launcher;
 mod macos;
+mod scanner;
 mod search;
 mod tray;
 mod view;

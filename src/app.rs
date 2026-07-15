@@ -6,14 +6,16 @@ use global_hotkey::GlobalHotKeyManager;
 use tray_icon::TrayIcon;
 use tray_icon::menu::CheckMenuItem;
 
-use crate::catalog;
 use crate::hotkey::register_hotkey;
 use crate::launcher::Launcher;
+use crate::scanner::Scanner;
 use crate::view::{Intent, View};
 use crate::window::{Step, Window};
 use crate::{macos, tray};
 
 pub(crate) static IS_VISIBLE: AtomicBool = AtomicBool::new(true);
+
+const WINDOW_Y_FRAC: f32 = 0.18;
 
 pub enum Request {
     Toggle,
@@ -39,11 +41,12 @@ pub struct OrbitApp {
     _hotkey: Option<GlobalHotKeyManager>,
     _tray: Option<TrayIcon>,
     login_item: Option<CheckMenuItem>,
+    scanner: Scanner,
     cmd_rx: Receiver<Request>,
     launcher: Launcher,
     view: View,
     window: Window,
-    positioned: bool,
+    positioned_for: Option<egui::Vec2>,
 }
 
 impl OrbitApp {
@@ -52,9 +55,6 @@ impl OrbitApp {
 
         macos::join_all_spaces();
         macos::add_vibrancy();
-
-        let mut launcher = Launcher::default();
-        launcher.set_apps(catalog::scan());
 
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let commands = Commands {
@@ -67,11 +67,12 @@ impl OrbitApp {
             _hotkey: register_hotkey(commands),
             _tray: tray,
             login_item,
+            scanner: Scanner::new(&cc.egui_ctx),
             cmd_rx,
-            launcher,
+            launcher: Launcher::default(),
             view: View::default(),
             window: Window::Activating { frames: 0 },
-            positioned: false,
+            positioned_for: None,
         }
     }
 
@@ -79,9 +80,10 @@ impl OrbitApp {
         self.window = Window::Activating { frames: 0 };
         IS_VISIBLE.store(true, Ordering::SeqCst);
         self.launcher.reset();
+        self.view.focus_query();
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-        self.position(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.scanner.refresh(ctx);
         ctx.request_repaint();
     }
 
@@ -92,16 +94,27 @@ impl OrbitApp {
         macos::hide_app();
     }
 
-    fn position(&self, ctx: &egui::Context) -> bool {
-        let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) else {
-            return false;
-        };
-        if monitor.x <= 0.0 || monitor.y <= 0.0 {
-            return false;
+    fn set_visible(&mut self, ctx: &egui::Context, visible: bool) {
+        match (self.window.is_visible(), visible) {
+            (false, true) => self.show(ctx),
+            (true, false) => self.hide(ctx),
+            _ => {}
         }
-        let pos = egui::pos2((monitor.x - crate::WINDOW_SIZE.x) / 2.0, monitor.y * 0.18);
+    }
+
+    fn reposition(&mut self, ctx: &egui::Context) {
+        let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) else {
+            return;
+        };
+        if monitor.x <= 0.0 || monitor.y <= 0.0 || self.positioned_for == Some(monitor) {
+            return;
+        }
+        let pos = egui::pos2(
+            (monitor.x - crate::WINDOW_SIZE.x) / 2.0,
+            monitor.y * WINDOW_Y_FRAC,
+        );
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
-        true
+        self.positioned_for = Some(monitor);
     }
 
     fn launch(&mut self, ctx: &egui::Context, row: usize) {
@@ -112,6 +125,20 @@ impl OrbitApp {
             eprintln!("orbit: failed to launch {}: {err}", entry.path.display());
         }
         self.hide(ctx);
+    }
+
+    fn handle(&mut self, ctx: &egui::Context, request: Request) {
+        match request {
+            Request::Toggle => self.set_visible(ctx, !self.window.is_visible()),
+            Request::Show => self.set_visible(ctx, true),
+            Request::Rescan => self.scanner.force(ctx),
+            Request::ToggleLogin => {
+                let enabled = macos::set_login(!macos::login_enabled());
+                if let Some(item) = &self.login_item {
+                    item.set_checked(enabled);
+                }
+            }
+        }
     }
 
     fn update_activation(&mut self, ctx: &egui::Context) {
@@ -131,37 +158,17 @@ impl OrbitApp {
 
 impl eframe::App for OrbitApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        while let Ok(cmd) = self.cmd_rx.try_recv() {
-            match cmd {
-                Request::Toggle => {
-                    if self.window.is_visible() {
-                        self.hide(ctx);
-                    } else {
-                        self.show(ctx);
-                    }
-                }
-                Request::Show => {
-                    if !self.window.is_visible() {
-                        self.show(ctx);
-                    }
-                }
-                Request::Rescan => {
-                    self.launcher.set_apps(catalog::scan());
-                }
-                Request::ToggleLogin => {
-                    let enabled = macos::set_login(!macos::login_enabled());
-                    if let Some(item) = &self.login_item {
-                        item.set_checked(enabled);
-                    }
-                }
-            }
+        if let Some(apps) = self.scanner.drain() {
+            self.launcher.set_apps(apps);
+        }
+
+        while let Ok(request) = self.cmd_rx.try_recv() {
+            self.handle(ctx, request);
         }
 
         self.update_activation(ctx);
 
-        if !self.positioned {
-            self.positioned = self.position(ctx);
-        }
+        self.reposition(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -177,6 +184,8 @@ impl eframe::App for OrbitApp {
         [0.0; 4]
     }
 
+    /// The global hotkey is Space-based, so the keystroke that summoned the
+    /// window would otherwise land in the query box as a leading space.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if self.window.just_shown() {
             raw_input
