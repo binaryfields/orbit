@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Match Info.plist LSMinimumSystemVersion so compiled dep code stays
+  # compatible with macOS 13.
+  MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          VERSION="$(cargo pkgid | sed 's/.*[#@]//')"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version $VERSION"
+            exit 1
+          fi
+
+      - name: Package Orbit.app
+        run: ./distro/macos/package.sh
+
+      - name: Zip bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ditto -c -k --keepParent "target/Orbit.app" "Orbit-${VERSION}-macos-arm64.zip"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Orbit $GITHUB_REF_NAME" \
+            --generate-notes \
+            "Orbit-${VERSION}-macos-arm64.zip"
