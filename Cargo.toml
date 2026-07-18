@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Lite application launcher for macOS"
 license = "MIT"
@@ -8,6 +8,7 @@ license = "MIT"
 [dependencies]
 crossbeam-channel = "0.5"
 eframe = "0.35"
+egui_taffy = "0.13"
 file_icon_provider = "1"
 global-hotkey = "0.8"
 nucleo-matcher = "0.3"
