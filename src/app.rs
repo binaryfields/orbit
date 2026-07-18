@@ -47,11 +47,17 @@ pub struct OrbitApp {
     view: View,
     window: Window,
     positioned_for: Option<egui::Vec2>,
+    last_activation_frame: Option<u64>,
 }
 
 impl OrbitApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        // egui_taffy discards and re-runs the frame when its layout changes;
+        // it needs at least one extra pass to settle.
+        cc.egui_ctx.options_mut(|options| {
+            options.max_passes = std::num::NonZeroUsize::new(2).unwrap();
+        });
 
         macos::join_all_spaces();
         macos::add_vibrancy();
@@ -73,6 +79,7 @@ impl OrbitApp {
             view: View::default(),
             window: Window::Activating { frames: 0 },
             positioned_for: None,
+            last_activation_frame: None,
         }
     }
 
@@ -142,6 +149,14 @@ impl OrbitApp {
     }
 
     fn update_activation(&mut self, ctx: &egui::Context) {
+        // logic() re-runs on every layout pass; the window state machine
+        // counts real frames, so advance it at most once per frame.
+        let frame = ctx.cumulative_frame_nr();
+        if self.last_activation_frame == Some(frame) {
+            return;
+        }
+        self.last_activation_frame = Some(frame);
+
         let focused = ctx.input(|i| i.viewport().focused);
         match self.window.advance(focused) {
             Step::Idle => {}
