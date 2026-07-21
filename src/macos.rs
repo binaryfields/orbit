@@ -1,3 +1,6 @@
+use std::path::Path;
+use std::process::Command;
+
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::NSApplication;
@@ -30,4 +33,8 @@ pub fn hide_app() {
 
 fn ns_app() -> Option<Retained<NSApplication>> {
     MainThreadMarker::new().map(NSApplication::sharedApplication)
+}
+
+pub fn open(path: &Path) -> std::io::Result<()> {
+    Command::new("open").arg(path).spawn().map(|_| ())
 }
