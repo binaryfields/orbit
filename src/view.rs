@@ -22,9 +22,10 @@ pub enum Action {
     Dismiss,
 }
 
-#[derive(Default)]
 pub struct View {
     icons: IconCache,
+    focus_pending: bool,
+    scroll_pending: bool,
 }
 
 impl View {
@@ -41,13 +42,13 @@ impl View {
             )
         });
 
-        let mut moved = up || down;
         if down {
             session.select_next();
         }
         if up {
             session.select_prev();
         }
+        self.scroll_pending |= up || down;
 
         let mut clicked_row = None;
         let panel = egui::Frame::new()
@@ -58,14 +59,16 @@ impl View {
         egui::CentralPanel::default().frame(panel).show(ui, |ui| {
             if self.draw_query_box(ui, session) {
                 session.query_changed();
-                moved = true;
+                self.scroll_pending = true;
             }
 
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(4.0);
 
-            if session.result_count() == 0 {
+            if session.is_scanning() {
+                ui.label(egui::RichText::new("Scanning applications...").weak());
+            } else if session.result_count() == 0 {
                 ui.label(egui::RichText::new("No matching apps").weak());
             } else {
                 ui.spacing_mut().item_spacing.y = 2.0;
@@ -73,13 +76,15 @@ impl View {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         for row in 0..session.result_count() {
-                            if self.draw_row(ui, session, row, moved) {
+                            if self.draw_row(ui, session, row) {
                                 clicked_row = Some(row);
                             }
                         }
                     });
             }
         });
+
+        self.scroll_pending = false;
 
         let launch = clicked_row.or(enter.then(|| session.selected()));
         launch
@@ -95,18 +100,20 @@ impl View {
                 .desired_width(f32::INFINITY)
                 .frame(egui::Frame::NONE),
         );
-        response.request_focus();
+        if std::mem::take(&mut self.focus_pending) {
+            response.request_focus();
+        }
         response.changed()
     }
 
-    fn draw_row(&mut self, ui: &mut egui::Ui, session: &Session, row: usize, moved: bool) -> bool {
+    fn draw_row(&mut self, ui: &mut egui::Ui, session: &Session, row: usize) -> bool {
         let Some(entry) = session.entry(row) else {
             return false;
         };
         let size = egui::vec2(ui.available_width(), ROW_HEIGHT);
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
         let selected = row == session.selected();
-        if selected && moved {
+        if selected && self.scroll_pending {
             ui.scroll_to_rect(rect, None);
         }
         if !ui.is_rect_visible(rect) {
@@ -140,5 +147,19 @@ impl View {
         let font = egui::FontId::proportional(ROW_TEXT_PX);
         painter.text(pos, egui::Align2::LEFT_CENTER, &entry.name, font, color);
         response.clicked()
+    }
+
+    pub fn focus_query(&mut self) {
+        self.focus_pending = true;
+    }
+}
+
+impl Default for View {
+    fn default() -> Self {
+        Self {
+            icons: IconCache::default(),
+            focus_pending: true,
+            scroll_pending: false,
+        }
     }
 }

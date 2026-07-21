@@ -4,7 +4,8 @@ use eframe::egui;
 use global_hotkey::GlobalHotKeyManager;
 use tray_icon::TrayIcon;
 
-use crate::catalog;
+use crate::catalog::AppEntry;
+use crate::scanner::ScanJob;
 use crate::session::Session;
 use crate::view::{Action, View};
 use crate::{hotkey, macos, tray};
@@ -15,16 +16,18 @@ pub enum Command {
     Toggle,
     Show,
     Rescan,
+    Loaded(Vec<AppEntry>),
 }
 
 pub struct OrbitApp {
     _hotkey: Option<GlobalHotKeyManager>,
     _tray: Option<TrayIcon>,
+    scan_job: ScanJob,
     cmd_rx: Receiver<Command>,
     session: Session,
     view: View,
     visible: bool,
-    positioned: bool,
+    last_monitor_size: Option<egui::Vec2>,
 }
 
 impl OrbitApp {
@@ -32,9 +35,6 @@ impl OrbitApp {
         let mut visuals = egui::Visuals::dark();
         visuals.text_cursor.blink = false;
         cc.egui_ctx.set_visuals(visuals);
-
-        let mut session = Session::default();
-        session.set_apps(catalog::scan());
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let sender = CommandSender {
@@ -44,12 +44,13 @@ impl OrbitApp {
 
         Self {
             _hotkey: hotkey::register(sender.clone()),
-            _tray: tray::build(sender),
+            _tray: tray::build(sender.clone()),
+            scan_job: ScanJob::new(sender),
             cmd_rx,
-            session,
+            session: Session::default(),
             view: View::default(),
             visible: true,
-            positioned: false,
+            last_monitor_size: None,
         }
     }
 
@@ -58,33 +59,35 @@ impl OrbitApp {
             Command::Toggle | Command::Show if !self.visible => self.show(ctx),
             Command::Toggle => self.hide(ctx),
             Command::Show => {}
-            Command::Rescan => self.session.set_apps(catalog::scan()),
+            Command::Rescan => self.scan_job.rescan(),
+            Command::Loaded(apps) => self.session.set_apps(apps),
         }
     }
 
     fn show(&mut self, ctx: &egui::Context) {
         self.visible = true;
         self.session.reset();
+        self.view.focus_query();
         macos::activate_app();
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-        self.position(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.scan_job.rescan_if_stale();
         ctx.request_repaint();
     }
 
-    fn position(&self, ctx: &egui::Context) -> bool {
+    fn reposition(&mut self, ctx: &egui::Context) {
         let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) else {
-            return false;
+            return;
         };
-        if monitor.x <= 0.0 || monitor.y <= 0.0 {
-            return false;
+        if monitor.x <= 0.0 || monitor.y <= 0.0 || self.last_monitor_size == Some(monitor) {
+            return;
         }
         let pos = egui::pos2(
             (monitor.x - crate::WINDOW_SIZE.x) / 2.0,
             monitor.y * WINDOW_Y_FRACTION,
         );
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
-        true
+        self.last_monitor_size = Some(monitor);
     }
 
     fn hide(&mut self, ctx: &egui::Context) {
@@ -100,9 +103,7 @@ impl eframe::App for OrbitApp {
             self.handle_command(ctx, command);
         }
 
-        if !self.positioned {
-            self.positioned = self.position(ctx);
-        }
+        self.reposition(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

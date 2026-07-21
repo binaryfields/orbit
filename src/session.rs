@@ -26,6 +26,10 @@ impl Session {
         self.update_results();
     }
 
+    pub fn is_scanning(&self) -> bool {
+        self.apps.is_empty()
+    }
+
     // ---- Query ----
 
     pub fn query_changed(&mut self) {

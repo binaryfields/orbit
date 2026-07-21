@@ -5,6 +5,7 @@ mod catalog;
 mod hotkey;
 mod icons;
 mod macos;
+mod scanner;
 mod session;
 mod tray;
 mod view;
