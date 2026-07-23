@@ -3,6 +3,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use eframe::egui;
 use global_hotkey::GlobalHotKeyManager;
 use tray_icon::TrayIcon;
+use tray_icon::menu::CheckMenuItem;
 
 use crate::catalog::AppEntry;
 use crate::scanner::ScanJob;
@@ -16,12 +17,14 @@ pub enum Command {
     Toggle,
     Show,
     Rescan,
+    ToggleLogin,
     Loaded(Vec<AppEntry>),
 }
 
 pub struct OrbitApp {
     _hotkey: Option<GlobalHotKeyManager>,
     _tray: Option<TrayIcon>,
+    login_item: Option<CheckMenuItem>,
     scan_job: ScanJob,
     cmd_rx: Receiver<Command>,
     session: Session,
@@ -36,15 +39,19 @@ impl OrbitApp {
         visuals.text_cursor.blink = false;
         cc.egui_ctx.set_visuals(visuals);
 
+        macos::show_on_all_spaces();
+
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let sender = CommandSender {
             tx: cmd_tx,
             ctx: cc.egui_ctx.clone(),
         };
+        let (tray, login_item) = tray::build(sender.clone()).unzip();
 
         Self {
             _hotkey: hotkey::register(sender.clone()),
-            _tray: tray::build(sender.clone()),
+            _tray: tray,
+            login_item,
             scan_job: ScanJob::new(sender),
             cmd_rx,
             session: Session::default(),
@@ -60,6 +67,12 @@ impl OrbitApp {
             Command::Toggle => self.hide(ctx),
             Command::Show => {}
             Command::Rescan => self.scan_job.rescan(),
+            Command::ToggleLogin => {
+                let enabled = macos::set_start_at_login(!macos::starts_at_login());
+                if let Some(item) = &self.login_item {
+                    item.set_checked(enabled);
+                }
+            }
             Command::Loaded(apps) => self.session.set_apps(apps),
         }
     }

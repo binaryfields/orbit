@@ -1,18 +1,32 @@
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::app::{Command, CommandSender};
 
 const SHOW_ID: &str = "show";
 const RESCAN_ID: &str = "rescan";
+const LOGIN_ID: &str = "login";
 
-pub fn build(sender: CommandSender) -> Option<TrayIcon> {
+pub fn build(sender: CommandSender) -> Option<(TrayIcon, CheckMenuItem)> {
     let menu = Menu::new();
     let show = MenuItem::with_id(SHOW_ID, "Show Orbit", true, None);
     let rescan = MenuItem::with_id(RESCAN_ID, "Rescan Applications", true, None);
+    let login = CheckMenuItem::with_id(
+        LOGIN_ID,
+        "Start at Login",
+        true,
+        crate::macos::starts_at_login(),
+        None,
+    );
     let quit = PredefinedMenuItem::quit(Some("Quit Orbit"));
-    if let Err(err) = menu.append_items(&[&show, &rescan, &PredefinedMenuItem::separator(), &quit])
-    {
+    if let Err(err) = menu.append_items(&[
+        &show,
+        &rescan,
+        &PredefinedMenuItem::separator(),
+        &login,
+        &PredefinedMenuItem::separator(),
+        &quit,
+    ]) {
         eprintln!("orbit: failed to build tray menu: {err}");
         return None;
     }
@@ -21,6 +35,7 @@ pub fn build(sender: CommandSender) -> Option<TrayIcon> {
         let cmd = match event.id.0.as_str() {
             SHOW_ID => Command::Show,
             RESCAN_ID => Command::Rescan,
+            LOGIN_ID => Command::ToggleLogin,
             _ => return,
         };
         sender.send(cmd);
@@ -34,7 +49,7 @@ pub fn build(sender: CommandSender) -> Option<TrayIcon> {
         .build()
         .inspect_err(|err| eprintln!("orbit: failed to create menu bar item: {err}"))
         .ok()?;
-    Some(tray)
+    Some((tray, login))
 }
 
 fn icon() -> Icon {
