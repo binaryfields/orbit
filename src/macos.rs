@@ -3,7 +3,10 @@ use std::process::Command;
 
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSApplication, NSWindowCollectionBehavior};
+use objc2_app_kit::{
+    NSApplication, NSAutoresizingMaskOptions, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+    NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior, NSWindowOrderingMode,
+};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use winit::event_loop::EventLoopBuilder;
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
@@ -14,13 +17,42 @@ pub fn set_accessory_activation_policy<T>(builder: &mut EventLoopBuilder<T>) {
     builder.with_activation_policy(ActivationPolicy::Accessory);
 }
 
-pub fn show_on_all_spaces() {
-    let Some(app) = ns_app() else { return };
+pub fn configure_windows() {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
     for window in app.windows().iter() {
-        let behavior = window.collectionBehavior()
-            | NSWindowCollectionBehavior::CanJoinAllSpaces
-            | NSWindowCollectionBehavior::FullScreenAuxiliary;
-        window.setCollectionBehavior(behavior);
+        window.setCollectionBehavior(
+            window.collectionBehavior()
+                | NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::FullScreenAuxiliary,
+        );
+        let Some(content) = window.contentView() else {
+            continue;
+        };
+        let Some(frame_view) = (unsafe { content.superview() }) else {
+            continue;
+        };
+        let effect = NSVisualEffectView::new(mtm);
+        effect.setFrame(content.frame());
+        effect.setMaterial(NSVisualEffectMaterial::HUDWindow);
+        effect.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+        effect.setState(NSVisualEffectState::Active);
+        effect.setAutoresizingMask(
+            NSAutoresizingMaskOptions::ViewWidthSizable
+                | NSAutoresizingMaskOptions::ViewHeightSizable,
+        );
+        effect.setWantsLayer(true);
+        if let Some(layer) = effect.layer() {
+            layer.setCornerRadius(f64::from(crate::PANEL_CORNER_RADIUS));
+            layer.setMasksToBounds(true);
+        }
+        frame_view.addSubview_positioned_relativeTo(
+            &effect,
+            NSWindowOrderingMode::Below,
+            Some(&content),
+        );
     }
 }
 

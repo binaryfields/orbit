@@ -3,7 +3,7 @@ use eframe::egui;
 use crate::icons::IconCache;
 use crate::session::Session;
 
-const PANEL_BG: egui::Color32 = egui::Color32::from_rgba_premultiplied(24, 24, 27, 246);
+const PANEL_BG: egui::Color32 = egui::Color32::from_rgba_premultiplied(17, 17, 19, 180);
 const QUERY_TEXT_PX: f32 = 26.0;
 const ROW_HEIGHT: f32 = 44.0;
 const ROW_CORNER_RADIUS: f32 = 8.0;
@@ -53,7 +53,7 @@ impl View {
         let mut clicked_row = None;
         let panel = egui::Frame::new()
             .fill(PANEL_BG)
-            .corner_radius(egui::CornerRadius::same(14))
+            .corner_radius(egui::CornerRadius::same(crate::PANEL_CORNER_RADIUS))
             .inner_margin(egui::Margin::same(14));
 
         egui::CentralPanel::default().frame(panel).show(ui, |ui| {

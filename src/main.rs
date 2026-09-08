@@ -12,6 +12,7 @@ mod view;
 mod window;
 
 pub const WINDOW_SIZE: egui::Vec2 = egui::Vec2 { x: 640.0, y: 420.0 };
+pub const PANEL_CORNER_RADIUS: u8 = 14;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

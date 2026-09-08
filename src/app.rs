@@ -40,7 +40,7 @@ impl OrbitApp {
         visuals.text_cursor.blink = false;
         cc.egui_ctx.set_visuals(visuals);
 
-        macos::show_on_all_spaces();
+        macos::configure_windows();
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let sender = CommandSender {
