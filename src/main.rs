@@ -9,6 +9,7 @@ mod scanner;
 mod session;
 mod tray;
 mod view;
+mod window;
 
 pub const WINDOW_SIZE: egui::Vec2 = egui::Vec2 { x: 640.0, y: 420.0 };
 

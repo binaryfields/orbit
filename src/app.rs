@@ -9,6 +9,7 @@ use crate::catalog::AppEntry;
 use crate::scanner::ScanJob;
 use crate::session::Session;
 use crate::view::{Action, View};
+use crate::window::{Effect, WindowState};
 use crate::{hotkey, macos, tray};
 
 const WINDOW_Y_FRACTION: f32 = 0.18;
@@ -29,7 +30,7 @@ pub struct OrbitApp {
     cmd_rx: Receiver<Command>,
     session: Session,
     view: View,
-    visible: bool,
+    window_state: WindowState,
     last_monitor_size: Option<egui::Vec2>,
 }
 
@@ -56,14 +57,14 @@ impl OrbitApp {
             cmd_rx,
             session: Session::default(),
             view: View::default(),
-            visible: true,
+            window_state: WindowState::Activating { frames: 0 },
             last_monitor_size: None,
         }
     }
 
     fn handle_command(&mut self, ctx: &egui::Context, command: Command) {
         match command {
-            Command::Toggle | Command::Show if !self.visible => self.show(ctx),
+            Command::Toggle | Command::Show if !self.window_state.is_visible() => self.show(ctx),
             Command::Toggle => self.hide(ctx),
             Command::Show => {}
             Command::Rescan => self.scan_job.rescan(),
@@ -78,7 +79,7 @@ impl OrbitApp {
     }
 
     fn show(&mut self, ctx: &egui::Context) {
-        self.visible = true;
+        self.window_state = WindowState::Activating { frames: 0 };
         self.session.reset();
         self.view.focus_query();
         macos::activate_app();
@@ -86,6 +87,20 @@ impl OrbitApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         self.scan_job.rescan_if_stale();
         ctx.request_repaint();
+    }
+
+    fn update_activation(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.viewport().focused);
+        match self.window_state.advance(focused) {
+            Effect::Idle => {}
+            Effect::Repaint { activate } => {
+                if activate {
+                    macos::activate_app();
+                }
+                ctx.request_repaint();
+            }
+            Effect::Dismiss => self.hide(ctx),
+        }
     }
 
     fn reposition(&mut self, ctx: &egui::Context) {
@@ -104,7 +119,7 @@ impl OrbitApp {
     }
 
     fn hide(&mut self, ctx: &egui::Context) {
-        self.visible = false;
+        self.window_state = WindowState::Hidden;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         macos::hide_app();
     }
@@ -115,6 +130,8 @@ impl eframe::App for OrbitApp {
         while let Ok(command) = self.cmd_rx.try_recv() {
             self.handle_command(ctx, command);
         }
+
+        self.update_activation(ctx);
 
         self.reposition(ctx);
     }
@@ -137,6 +154,14 @@ impl eframe::App for OrbitApp {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0; 4]
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if self.window_state.just_shown() {
+            raw_input
+                .events
+                .retain(|e| !matches!(e, egui::Event::Text(t) if t == " " || t == "\u{a0}"));
+        }
     }
 }
 
