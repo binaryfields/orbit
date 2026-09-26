@@ -141,9 +141,7 @@ impl eframe::App for OrbitApp {
         match self.view.render(ui, &mut self.session) {
             Some(Action::Launch(row)) => {
                 if let Some(entry) = self.session.entry(row) {
-                    if let Err(err) = macos::open(&entry.path) {
-                        eprintln!("orbit: failed to launch {}: {err}", entry.path.display());
-                    }
+                    macos::open(&entry.path);
                     self.hide(&ctx);
                 }
             }

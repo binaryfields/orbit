@@ -1,12 +1,14 @@
 use std::path::Path;
-use std::process::Command;
 
+use block2::RcBlock;
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{
-    NSApplication, NSAutoresizingMaskOptions, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-    NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior, NSWindowOrderingMode,
+    NSApplication, NSAutoresizingMaskOptions, NSRunningApplication, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior,
+    NSWindowOrderingMode, NSWorkspace, NSWorkspaceOpenConfiguration,
 };
+use objc2_foundation::{NSError, NSString, NSURL};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use winit::event_loop::EventLoopBuilder;
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
@@ -84,8 +86,20 @@ fn ns_app() -> Option<Retained<NSApplication>> {
 
 // ---- Launching ----
 
-pub fn open(path: &Path) -> std::io::Result<()> {
-    Command::new("open").arg(path).spawn().map(|_| ())
+pub fn open(path: &Path) {
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    let display = path.display().to_string();
+    let on_done = RcBlock::new(move |_: *mut NSRunningApplication, err: *mut NSError| {
+        if let Some(err) = unsafe { err.as_ref() } {
+            let reason = err.localizedDescription();
+            eprintln!("orbit: failed to launch {display}: {reason}");
+        }
+    });
+    NSWorkspace::sharedWorkspace().openApplicationAtURL_configuration_completionHandler(
+        &url,
+        &NSWorkspaceOpenConfiguration::configuration(),
+        Some(&on_done),
+    );
 }
 
 // ---- Login item ----
